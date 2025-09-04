@@ -1,7 +1,10 @@
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor
 from sklearn.neural_network import MLPClassifier, MLPRegressor
+from sklearn.ensemble import ExtraTreesClassifier, AdaBoostClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC, SVR
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_squared_error, classification_report
@@ -22,22 +25,37 @@ class MultiHazardPredictor:
         self.scaler = StandardScaler()
         self.is_trained = False
         
-        # Model configurations
+        # Enhanced model configurations for better accuracy
         self.drought_config = {
-            'n_estimators': 100,
-            'max_depth': 10,
+            'n_estimators': 200,
+            'max_depth': 12,
+            'min_samples_split': 5,
+            'min_samples_leaf': 2,
+            'max_features': 'sqrt',
+            'bootstrap': True,
+            'oob_score': True,
             'random_state': 42
         }
         
         self.flood_config = {
-            'hidden_layer_sizes': (100, 50),
-            'max_iter': 500,
+            'hidden_layer_sizes': (150, 100, 50),
+            'activation': 'relu',
+            'solver': 'adam',
+            'alpha': 0.0001,
+            'learning_rate': 'adaptive',
+            'max_iter': 1000,
+            'early_stopping': True,
+            'validation_fraction': 0.1,
             'random_state': 42
         }
         
         self.earthquake_config = {
-            'n_estimators': 150,
-            'max_depth': 15,
+            'n_estimators': 300,
+            'learning_rate': 0.1,
+            'max_depth': 8,
+            'min_samples_split': 10,
+            'min_samples_leaf': 4,
+            'subsample': 0.8,
             'random_state': 42
         }
     
@@ -107,7 +125,7 @@ class MultiHazardPredictor:
     
     def train_drought_model(self, training_data, labels):
         """
-        Train drought prediction model using Random Forest.
+        Train drought prediction model using Enhanced Random Forest.
         """
         self.drought_model = RandomForestClassifier(**self.drought_config)
         
@@ -127,7 +145,7 @@ class MultiHazardPredictor:
     
     def train_flood_model(self, training_data, labels):
         """
-        Train flood prediction model using Neural Network.
+        Train flood prediction model using Enhanced Neural Network.
         """
         self.flood_model = MLPClassifier(**self.flood_config)
         
@@ -147,9 +165,9 @@ class MultiHazardPredictor:
     
     def train_earthquake_model(self, training_data, labels):
         """
-        Train earthquake prediction model using Random Forest.
+        Train earthquake prediction model using Gradient Boosting.
         """
-        self.earthquake_model = RandomForestRegressor(**self.earthquake_config)
+        self.earthquake_model = GradientBoostingRegressor(**self.earthquake_config)
         
         # Prepare features
         X = []

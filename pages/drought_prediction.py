@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from data.mock_data_generator import MockDataGenerator
-from models.hazard_models import MultiHazardPredictor
+from models.enhanced_predictor import EnhancedHazardPredictor
 from visualization.maps import create_region_specific_map
 
 def render_drought_page():
@@ -18,7 +18,7 @@ def render_drought_page():
     if 'mock_generator' not in st.session_state:
         st.session_state.mock_generator = MockDataGenerator()
     if 'predictor' not in st.session_state:
-        st.session_state.predictor = MultiHazardPredictor()
+        st.session_state.predictor = EnhancedHazardPredictor()
     
     # Sidebar controls
     st.sidebar.subheader("Analysis Parameters")
@@ -66,6 +66,18 @@ def render_drought_page():
     st.sidebar.subheader("Model Settings")
     confidence_threshold = st.sidebar.slider("Confidence Threshold", 0.5, 0.95, 0.8)
     prediction_horizon = st.sidebar.selectbox("Prediction Horizon", ["7 days", "14 days", "30 days", "90 days"])
+
+    # Initialize prediction variables to default values
+    risk_level = "Unknown"
+    risk_probability = 0.0
+    confidence = 0.0
+    factors = {}
+    current_ndvi = 0.5
+    historical_ndvi = 0.5
+    ndvi_percentile = 50.0
+    current_moisture = 0.5
+    historical_moisture = 0.5
+    moisture_percentile = 50.0
     
     # Main content
     col1, col2 = st.columns([2, 1])
@@ -105,7 +117,7 @@ def render_drought_page():
         fig_ndvi.add_hline(y=0.3, line_dash="dash", line_color="red", 
                           annotation_text="Drought Threshold")
         fig_ndvi.update_layout(height=400)
-        st.plotly_chart(fig_ndvi, use_container_width=True)
+        st.plotly_chart(fig_ndvi, width='stretch')
         
         # Soil moisture plot
         fig_moisture = px.line(
@@ -118,7 +130,7 @@ def render_drought_page():
         fig_moisture.add_hline(y=0.2, line_dash="dash", line_color="orange", 
                               annotation_text="Drought Risk Threshold")
         fig_moisture.update_layout(height=400)
-        st.plotly_chart(fig_moisture, use_container_width=True)
+        st.plotly_chart(fig_moisture, width='stretch')
         
         # Combined analysis
         st.subheader("🔍 Multi-factor Drought Analysis")
@@ -136,7 +148,7 @@ def render_drought_page():
             title='NDVI vs Soil Moisture (Color: Precipitation, Size: Temperature)',
             labels={'soil_moisture': 'Soil Moisture', 'ndvi': 'NDVI'}
         )
-        st.plotly_chart(fig_correlation, use_container_width=True)
+        st.plotly_chart(fig_correlation, width='stretch')
     
     with col2:
         st.subheader("🎯 Current Drought Assessment")
@@ -149,56 +161,92 @@ def render_drought_page():
             'precipitation': weather_data['precipitation'].tail(7).values
         }
         
-        drought_prediction = st.session_state.predictor.predict_drought_risk(latest_data)
-        
-        # Display current risk
-        risk_level = drought_prediction['risk_level']
-        risk_probability = drought_prediction['probability']
-        confidence = drought_prediction['confidence']
-        
-        # Risk level display
-        risk_colors = {'Low': 'green', 'Medium': 'orange', 'High': 'red'}
-        st.markdown(f"**Current Risk Level:** <span style='color: {risk_colors.get(risk_level, 'gray')}'>{risk_level}</span>", 
-                   unsafe_allow_html=True)
-        
-        st.metric("Risk Probability", f"{risk_probability:.1%}")
-        st.metric("Model Confidence", f"{confidence:.1%}")
-        
-        # Risk factors
-        st.subheader("📈 Key Risk Factors")
-        factors = drought_prediction['factors']
-        
-        factor_df = pd.DataFrame([
-            {'Factor': 'NDVI Trend', 'Value': f"{factors['ndvi_trend']:.3f}", 'Impact': 'Negative' if factors['ndvi_trend'] < 0 else 'Positive'},
-            {'Factor': 'Soil Moisture', 'Value': f"{factors['soil_moisture']:.2f}", 'Impact': 'Low' if factors['soil_moisture'] < 0.3 else 'Normal'},
-            {'Factor': 'Temperature Anomaly', 'Value': f"{factors['temperature_anomaly']:.1f}°C", 'Impact': 'High' if factors['temperature_anomaly'] > 2 else 'Normal'}
-        ])
-        
-        st.dataframe(factor_df, use_container_width=True)
-        
-        # Historical comparison
-        st.subheader("📊 Historical Context")
-        
-        # Calculate historical statistics
-        current_ndvi = np.mean(ndvi_data['ndvi'].tail(7))
-        historical_ndvi = np.mean(ndvi_data['ndvi'])
-        ndvi_percentile = (ndvi_data['ndvi'] < current_ndvi).mean() * 100
-        
-        current_moisture = np.mean(moisture_data['soil_moisture'].tail(7))
-        historical_moisture = np.mean(moisture_data['soil_moisture'])
-        moisture_percentile = (moisture_data['soil_moisture'] < current_moisture).mean() * 100
-        
-        st.metric(
-            "NDVI Percentile", 
-            f"{ndvi_percentile:.0f}%",
-            f"{current_ndvi - historical_ndvi:.3f}"
-        )
-        
-        st.metric(
-            "Moisture Percentile", 
-            f"{moisture_percentile:.0f}%",
-            f"{current_moisture - historical_moisture:.3f}"
-        )
+        st.subheader("Latest Data Snapshot for Drought Prediction")
+        st.json({
+            "Avg NDVI (last 30 days)": np.mean(latest_data['ndvi']),
+            "Avg Soil Moisture (last 30 days)": np.mean(latest_data['soil_moisture']),
+            "Avg Temperature (last 30 days)": np.mean(latest_data['temperature']),
+            "Total Precipitation (last 30 days)": np.sum(latest_data['precipitation'])
+        })
+
+        if st.button("Predict Drought Risk", type="primary"):
+            if st.session_state.predictor.drought_model is None or not st.session_state.predictor.is_trained:
+                st.warning("Drought model is not trained. Please go to 'Model Training' page to train the models.")
+            else:
+                with st.spinner("Predicting drought risk..."):
+                    # Call the correct prediction method with pre-processed data
+                    drought_prediction = st.session_state.predictor.predict_drought_risk({
+                        'ndvi': latest_data['ndvi'],
+                        'soil_moisture': latest_data['soil_moisture'],
+                        'temperature': latest_data['temperature'],
+                        'precipitation': latest_data['precipitation']
+                    })
+
+                    if "error" in drought_prediction:
+                        st.error(f"Prediction Error: {drought_prediction['error']}")
+                        # Re-initialize variables to default values if there's an error
+                        risk_level = "Unknown"
+                        risk_probability = 0.0
+                        confidence = 0.0
+                        factors = {}
+                        current_ndvi = np.mean(latest_data['ndvi']) if len(latest_data['ndvi']) > 0 else 0.5
+                        historical_ndvi = current_ndvi
+                        ndvi_percentile = 50.0
+                        current_moisture = np.mean(latest_data['soil_moisture']) if len(latest_data['soil_moisture']) > 0 else 0.5
+                        historical_moisture = current_moisture
+                        moisture_percentile = 50.0
+                    else:
+                        # Display current risk
+                        risk_level = drought_prediction['risk_level']
+                        risk_probability = drought_prediction['risk_probability']
+                        confidence = drought_prediction['confidence']
+                        factors = drought_prediction['factors']
+
+                        # Calculate historical statistics (only if prediction was successful and data is available)
+                        current_ndvi = np.mean(ndvi_data['ndvi'].tail(7)) if not ndvi_data['ndvi'].empty else 0.5
+                        historical_ndvi = np.mean(ndvi_data['ndvi']) if not ndvi_data['ndvi'].empty else 0.5
+                        ndvi_percentile = (ndvi_data['ndvi'] < current_ndvi).mean() * 100 if not ndvi_data['ndvi'].empty else 50.0
+                        
+                        current_moisture = np.mean(moisture_data['soil_moisture'].tail(7)) if not moisture_data['soil_moisture'].empty else 0.5
+                        historical_moisture = np.mean(moisture_data['soil_moisture']) if not moisture_data['soil_moisture'].empty else 0.5
+                        moisture_percentile = (moisture_data['soil_moisture'] < current_moisture).mean() * 100 if not moisture_data['soil_moisture'].empty else 50.0
+                    
+                    # Display current risk (always attempt to display even if default values)
+                    risk_colors = {'Low': 'green', 'Medium': 'orange', 'High': 'red', 'Unknown': 'gray'}
+                    st.markdown(f"**Current Risk Level:** <span style='color: {risk_colors.get(risk_level, 'gray')}'>{risk_level}</span>", 
+                               unsafe_allow_html=True)
+                    
+                    st.metric("Risk Probability", f"{risk_probability:.1%}")
+                    st.metric("Model Confidence", f"{confidence:.1%}")
+                    
+                    # Risk factors (only display if factors are available and not empty)
+                    if factors and any(factors.values()):
+                        st.subheader("📈 Key Risk Factors")
+                        factor_df = pd.DataFrame([
+                            {'Factor': 'NDVI Trend', 'Value': f"{factors.get('ndvi_trend', 0.0):.3f}", 'Impact': 'Negative' if factors.get('ndvi_trend', 0.0) < 0 else 'Positive'},
+                            {'Factor': 'Soil Moisture', 'Value': f"{factors.get('soil_moisture', 0.0):.2f}", 'Impact': 'Low' if factors.get('soil_moisture', 0.0) < 0.3 else 'Normal'},
+                            {'Factor': 'Temperature Anomaly', 'Value': f"{factors.get('temperature_anomaly', 0.0):.1f}°C", 'Impact': 'High' if factors.get('temperature_anomaly', 0.0) > 2 else 'Normal'}
+                        ])
+                        st.dataframe(factor_df, width='stretch')
+                    else:
+                        st.info("No risk factors to display (prediction might be unavailable or failed).")
+                    
+                    # Historical comparison (only display if historical data is meaningful)
+                    st.subheader("📊 Historical Context")
+                    if not ndvi_data['ndvi'].empty and not moisture_data['soil_moisture'].empty:
+                        st.metric(
+                            "NDVI Percentile", 
+                            f"{ndvi_percentile:.0f}%",
+                            f"{current_ndvi - historical_ndvi:.3f}"
+                        )
+                        
+                        st.metric(
+                            "Moisture Percentile", 
+                            f"{moisture_percentile:.0f}%",
+                            f"{current_moisture - historical_moisture:.3f}"
+                        )
+                    else:
+                        st.info("No historical context to display (insufficient data).")
     
     # Full width sections
     st.markdown("---")
@@ -212,9 +260,9 @@ def render_drought_page():
         # Calculate various drought indices
         # Standardized Precipitation Index (simplified)
         precip_values = weather_data['precipitation'].values
-        precip_mean = np.mean(precip_values)
-        precip_std = np.std(precip_values)
-        recent_precip = np.mean(precip_values[-30:])  # Last 30 days
+        precip_mean = float(np.mean(precip_values))
+        precip_std = float(np.std(precip_values))
+        recent_precip = float(np.mean(precip_values[-30:]))  # Last 30 days
         spi = (recent_precip - precip_mean) / precip_std if precip_std > 0 else 0
         
         # Vegetation Condition Index
@@ -224,18 +272,18 @@ def render_drought_page():
         vci = (current_ndvi - ndvi_min) / (ndvi_max - ndvi_min) * 100 if ndvi_max > ndvi_min else 50
         
         # Soil Water Deficit
-        max_moisture = np.percentile(moisture_data['soil_moisture'], 95)
-        current_moisture_avg = np.mean(moisture_data['soil_moisture'].tail(7))
-        water_deficit = max(0, max_moisture - current_moisture_avg)
+        max_moisture = np.percentile(moisture_data['soil_moisture'], 95) if not moisture_data['soil_moisture'].empty else 0.0
+        current_moisture_avg = np.mean(moisture_data['soil_moisture'].tail(7)) if not moisture_data['soil_moisture'].empty else 0.0
+        water_deficit = float(max(0, max_moisture - current_moisture_avg))
         
         indicators_df = pd.DataFrame([
             {'Indicator': 'Standardized Precipitation Index (SPI)', 'Value': f"{spi:.2f}", 'Status': 'Drought' if spi < -1 else 'Normal'},
             {'Indicator': 'Vegetation Condition Index (VCI)', 'Value': f"{vci:.1f}%", 'Status': 'Poor' if vci < 40 else 'Good'},
             {'Indicator': 'Soil Water Deficit', 'Value': f"{water_deficit:.3f}", 'Status': 'High' if water_deficit > 0.3 else 'Low'},
-            {'Indicator': 'Temperature Anomaly', 'Value': f"{factors['temperature_anomaly']:.1f}°C", 'Status': 'High' if factors['temperature_anomaly'] > 2 else 'Normal'}
+            {'Indicator': 'Temperature Anomaly', 'Value': f"{factors.get('temperature_anomaly', 0.0):.1f}°C", 'Status': 'High' if factors.get('temperature_anomaly', 0.0) > 2 else 'Normal'}
         ])
         
-        st.dataframe(indicators_df, use_container_width=True)
+        st.dataframe(indicators_df, width='stretch')
     
     with col2:
         st.subheader("🔮 Forecast & Trends")
@@ -285,7 +333,7 @@ def render_drought_page():
             height=350
         )
         
-        st.plotly_chart(fig_forecast, use_container_width=True)
+        st.plotly_chart(fig_forecast, width='stretch')
         
         # Forecast summary
         avg_forecast_ndvi = np.mean(forecast_df['predicted_ndvi'])
@@ -329,12 +377,17 @@ def render_drought_page():
         zoom_start=8
     )
     
-    st.components.v1.html(region_map._repr_html_(), height=400)
+    import streamlit.components.v1 as components
+    components.html(region_map._repr_html_(), height=400)
     
     # Action recommendations
     st.markdown("---")
     st.subheader("💡 Recommended Actions")
     
+    # Ensure risk_level is defined before using it for recommendations
+    if 'risk_level' not in locals():
+        risk_level = "Unknown" # Default if not set by prediction
+
     if risk_level == "High":
         recommendations = [
             "🚨 Implement immediate water conservation measures",

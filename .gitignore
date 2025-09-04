@@ -1,0 +1,29 @@
+
+# Python specific
+__pycache__/
+*.pyc
+*.egg-info/
+.Python
+.pytest_cache/
+
+# OS specific
+.DS_Store
+
+# Virtual environment
+.venv/
+env/
+venv/
+.local/
+
+# Dependency management
+uv.lock
+
+# Trained models (can be large binary files, usually regenerated)
+*.joblib
+
+# IDE specific / temporary files
+.vscode/
+*.bak
+*~
+*.swp
+"visualization/Editing fayaz:data_processor.py at main \302\267 MdFayaz7:fayaz.html"

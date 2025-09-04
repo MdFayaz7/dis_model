@@ -55,7 +55,7 @@ class AlertSystem:
             self.alert_history.append(alert)
             return alert
         
-        return None
+        return {}
     
     def _calculate_alert_level(self, risk_score: float, thresholds: Dict) -> str:
         """
@@ -249,10 +249,15 @@ class AlertSystem:
         
         if not active:
             # Return empty DataFrame with proper columns
-            return pd.DataFrame(columns=[
-                'Alert ID', 'Hazard Type', 'Region', 'Level', 
-                'Risk Score', 'Timestamp', 'Status'
-            ])
+            return pd.DataFrame({
+                'Alert ID': pd.Series([], dtype='str'),
+                'Hazard Type': pd.Series([], dtype='str'),
+                'Region': pd.Series([], dtype='str'),
+                'Level': pd.Series([], dtype='str'),
+                'Risk Score': pd.Series([], dtype='str'),
+                'Timestamp': pd.Series([], dtype='str'),
+                'Status': pd.Series([], dtype='str')
+            })
         
         # Convert to DataFrame
         df_data = []

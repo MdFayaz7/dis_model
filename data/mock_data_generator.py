@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import random
 from typing import Dict, List, Tuple
+from models.enhanced_predictor import EnhancedHazardPredictor # Import EnhancedHazardPredictor
 
 class MockDataGenerator:
     """
@@ -121,7 +122,7 @@ class MockDataGenerator:
             
             # Determine if earthquake occurs
             if np.random.random() < base_frequency:
-                # Generate magnitude following Gutenberg-Richter law
+                        # Generate magnitude following Gutenberg-Richter law
                 magnitude = self._generate_earthquake_magnitude()
                 
                 # Generate location near the region
@@ -130,10 +131,10 @@ class MockDataGenerator:
                 
                 events.append({
                     'date': date,
-                    'latitude': lat + lat_offset,
-                    'longitude': lat + lon_offset,  # Using lat as approximate longitude
-                    'magnitude': magnitude,
-                    'depth': np.random.uniform(5, 200),  # km
+                    'latitude': float(lat + lat_offset),
+                    'longitude': float(lat + lon_offset),  # Using lat as approximate longitude  
+                    'magnitude': float(magnitude),
+                    'depth': float(np.random.uniform(5, 200)),  # km
                     'type': 'earthquake'
                 })
         
@@ -176,7 +177,8 @@ class MockDataGenerator:
         precip_occurs = np.random.random(days) < (wet_season_prob * 0.3)
         
         precipitation = np.zeros(days)
-        precipitation[precip_occurs] = np.random.exponential(10, np.sum(precip_occurs))
+        precip_count = np.sum(precip_occurs)
+        precipitation[precip_occurs] = np.random.exponential(10, precip_count)
         
         # Humidity patterns
         humidity_base = 60 if region_type != 'arid' else 30
@@ -234,7 +236,7 @@ class MockDataGenerator:
         predictions = []
         
         for i in range(num_predictions):
-            region = np.random.choice(self.regions)
+            region = self.regions[np.random.randint(0, len(self.regions))]
             hazard_type = np.random.choice(self.hazard_types)
             
             risk_weights = self._get_risk_weights(region['type'], hazard_type)
@@ -316,3 +318,156 @@ class MockDataGenerator:
             'Critical': np.random.uniform(0.8, 1.0)
         }
         return score_map.get(severity, 0.5)
+
+    def generate_training_data(self, num_regions: int = 5, days_per_region: int = 365) -> Dict[str, pd.DataFrame]:
+        """
+        Generate comprehensive training data for all hazard models.
+        Returns a dictionary of DataFrames for each hazard type, including features and labels.
+        """
+        all_drought_data = []
+        all_flood_data = []
+        all_earthquake_data = []
+
+        for _ in range(num_regions):
+            region = random.choice(self.regions)
+            lat, lon = region['lat'], region['lon']
+            region_type = region['type']
+
+            # Generate historical data for the region
+            weather_df = self.generate_weather_data(days=days_per_region, lat=lat, region_type=region_type)
+            ndvi_df = self.generate_ndvi_data(days=days_per_region, lat=lat, region_type=region_type)
+            moisture_df = self.generate_soil_moisture_data(days=days_per_region, lat=lat, region_type=region_type)
+            seismic_events = self.generate_seismic_data(days=days_per_region, lat=lat, is_seismic_region=('seismic' in region_type))
+
+            # Merge dataframes on date for consistent time series
+            merged_df = weather_df.set_index('date').join(ndvi_df.set_index('date'), how='outer', lsuffix='_weather', rsuffix='_ndvi')
+            merged_df = merged_df.join(moisture_df.set_index('date'), how='outer', rsuffix='_moisture')
+            merged_df = merged_df.sort_index().ffill().bfill() # Fill missing dates
+
+            # For each day, create features and labels
+            for date_idx in range(days_per_region):
+                current_date = merged_df.index[date_idx]
+                # Ensure we have enough historical data for feature extraction (e.g., last 30 days)
+                if date_idx < 30:
+                    continue
+                
+                past_30_days_data = merged_df.iloc[date_idx-30:date_idx]
+                
+                # Filter seismic events for the past 30 days and prepare input for feature extraction
+                recent_seismic = [e for e in seismic_events if current_date - timedelta(days=30) <= e['date'] < current_date]
+                
+                input_data = {
+                    'temperature': past_30_days_data['temperature'].tolist(),
+                    'precipitation': past_30_days_data['precipitation'].tolist(),
+                    'humidity': past_30_days_data['humidity'].tolist(),
+                    'ndvi': past_30_days_data['ndvi'].tolist(),
+                    'soil_moisture': past_30_days_data['soil_moisture'].tolist(),
+                    'seismic_activity': [e['magnitude'] for e in recent_seismic], # seismic_activity values
+                    'depth': [e['depth'] for e in recent_seismic], # Ensure depth is always present
+                    'precipitation_forecast': [] # Ensure this is always present, even if empty for training
+                }
+
+                # Generate mock labels for training
+                # Drought: based on NDVI and soil moisture trends, and precipitation
+                drought_label = 'Low'
+                avg_ndvi_7d = np.mean(input_data['ndvi'][-7:]) if len(input_data['ndvi']) >= 7 else 0.5
+                avg_moisture_7d = np.mean(input_data['soil_moisture'][-7:]) if len(input_data['soil_moisture']) >= 7 else 0.5
+                sum_precip_30d = np.sum(input_data['precipitation']) if len(input_data['precipitation']) >= 30 else 0.0
+                
+                if avg_ndvi_7d < 0.25 and avg_moisture_7d < 0.15 and sum_precip_30d < 10:
+                    drought_label = 'High'
+                elif avg_ndvi_7d < 0.4 and avg_moisture_7d < 0.3 and sum_precip_30d < 30:
+                    drought_label = 'Medium'
+                elif avg_ndvi_7d > 0.6 and avg_moisture_7d > 0.5 and sum_precip_30d > 50:
+                    drought_label = 'Normal'
+                
+                # Introduce randomness to ensure at least two classes, especially for small datasets
+                if np.random.rand() < 0.15: # 15% chance to be High or Medium
+                    drought_label = np.random.choice(['High', 'Medium'])
+                elif np.random.rand() < 0.30: # 30% chance to be Medium (if not High)
+                    drought_label = 'Medium'
+
+                # Flood: based on recent precipitation and soil moisture, and river levels if available
+                flood_label = 'Low'
+                sum_precip_7d = np.sum(input_data['precipitation'][-7:]) if len(input_data['precipitation']) >= 7 else 0.0
+                avg_moisture_7d_flood = np.mean(input_data['soil_moisture'][-7:]) if len(input_data['soil_moisture']) >= 7 else 0.0
+                
+                # Simulate a river level for flood data generation
+                simulated_river_level = 0.5 # Default
+                if not weather_df.empty and 'river_level' in weather_df.columns and date_idx < len(weather_df.index):
+                    simulated_river_level = weather_df['river_level'].loc[current_date] if current_date in weather_df.index else 0.5
+
+                if sum_precip_7d > 120 and avg_moisture_7d_flood > 0.85 and simulated_river_level > 0.8:
+                    flood_label = 'High'
+                elif sum_precip_7d > 60 and avg_moisture_7d_flood > 0.7 and simulated_river_level > 0.7:
+                    flood_label = 'Medium'
+                elif sum_precip_7d < 20 and avg_moisture_7d_flood < 0.5 and simulated_river_level < 0.6:
+                    flood_label = 'Normal'
+                
+                # Introduce randomness to ensure at least two classes
+                if np.random.rand() < 0.15: # 15% chance to be High or Medium
+                    flood_label = np.random.choice(['High', 'Medium'])
+                elif np.random.rand() < 0.30: # 30% chance to be Medium (if not High)
+                    flood_label = 'Medium'
+
+                # Earthquake: based on recent seismic activity (magnitude as target)
+                earthquake_label = 0.0
+                if len(input_data['seismic_activity']) > 0:
+                    earthquake_label = np.max(input_data['seismic_activity'])
+
+                # Append data for feature extraction
+                all_drought_data.append({'data': input_data, 'label': drought_label})
+                all_flood_data.append({'data': input_data, 'label': flood_label})
+                all_earthquake_data.append({'data': input_data, 'label': earthquake_label})
+        
+        # --- Ensure at least two classes for classification models (Drought and Flood) ---
+        # For Drought
+        drought_labels_only = [item['label'] for item in all_drought_data]
+        if len(set(drought_labels_only)) < 2 and len(drought_labels_only) > 0:
+            # If only one class, force some to be 'Medium' or 'High'
+            # This is a fallback to ensure model trainability
+            unique_labels = list(set(drought_labels_only))
+            if 'Low' in unique_labels or 'Normal' in unique_labels:
+                for i in range(min(5, len(all_drought_data) // 10)): # Change up to 10% or 5 samples
+                    idx = np.random.randint(len(all_drought_data))
+                    all_drought_data[idx]['label'] = np.random.choice(['Medium', 'High'])
+            elif len(unique_labels) == 1: # If only one high/medium class, force a 'Low'
+                for i in range(min(5, len(all_drought_data) // 10)): # Change up to 10% or 5 samples
+                    idx = np.random.randint(len(all_drought_data))
+                    all_drought_data[idx]['label'] = 'Low'
+
+        # For Flood
+        flood_labels_only = [item['label'] for item in all_flood_data]
+        if len(set(flood_labels_only)) < 2 and len(flood_labels_only) > 0:
+            unique_labels = list(set(flood_labels_only))
+            if 'Low' in unique_labels or 'Normal' in unique_labels:
+                for i in range(min(5, len(all_flood_data) // 10)): # Change up to 10% or 5 samples
+                    idx = np.random.randint(len(all_flood_data))
+                    all_flood_data[idx]['label'] = np.random.choice(['Medium', 'High'])
+            elif len(unique_labels) == 1: # If only one high/medium class, force a 'Low'
+                for i in range(min(5, len(all_flood_data) // 10)): # Change up to 10% or 5 samples
+                    idx = np.random.randint(len(all_flood_data))
+                    all_flood_data[idx]['label'] = 'Low'
+
+        # Process appended data to create final training DataFrames
+        def process_hazard_data(hazard_data_list, predictor_instance):
+            features_list = []
+            labels_list = []
+            for item in hazard_data_list:
+                features, _ = predictor_instance.extract_advanced_features(item['data'])
+                features_list.append(features.flatten())
+                labels_list.append(item['label'])
+            return pd.DataFrame(features_list), pd.Series(labels_list)
+
+        # Create a temporary predictor instance to use its feature extraction
+        temp_predictor = EnhancedHazardPredictor()
+
+        X_drought, y_drought = process_hazard_data(all_drought_data, temp_predictor)
+        X_flood, y_flood = process_hazard_data(all_flood_data, temp_predictor)
+        X_earthquake, y_earthquake = process_hazard_data(all_earthquake_data, temp_predictor)
+
+        return {
+            'drought': {'features': X_drought, 'labels': y_drought},
+            'flood': {'features': X_flood, 'labels': y_flood},
+            'earthquake': {'features': X_earthquake, 'labels': y_earthquake}
+        }

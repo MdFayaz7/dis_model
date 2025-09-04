@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from data.mock_data_generator import MockDataGenerator
-from models.hazard_models import MultiHazardPredictor
+from models.enhanced_predictor import EnhancedHazardPredictor # Changed import from MultiHazardPredictor
 from visualization.maps import create_region_specific_map
 
 def render_earthquake_page():
@@ -18,7 +18,7 @@ def render_earthquake_page():
     if 'mock_generator' not in st.session_state:
         st.session_state.mock_generator = MockDataGenerator()
     if 'predictor' not in st.session_state:
-        st.session_state.predictor = MultiHazardPredictor()
+        st.session_state.predictor = EnhancedHazardPredictor() # Changed to EnhancedHazardPredictor
     
     # Sidebar controls
     st.sidebar.subheader("Analysis Parameters")
@@ -66,6 +66,20 @@ def render_earthquake_page():
     magnitude_threshold = st.sidebar.slider("Minimum Magnitude", 1.0, 5.0, 2.5, step=0.1)
     confidence_threshold = st.sidebar.slider("Confidence Threshold", 0.5, 0.95, 0.7)
     prediction_horizon = st.sidebar.selectbox("Prediction Horizon", ["7 days", "14 days", "30 days", "90 days"])
+
+    # Initialize prediction variables to default values
+    magnitude_prediction = 0.0
+    risk_probability = 0.0
+    confidence = 0.0
+    risk_level = "Unknown"
+    risk_color = "gray"
+    factors = {}
+    recent_activity = 0
+    total_events = 0
+    max_magnitude = 0.0
+    mean_magnitude = 0.0
+    b_value = 1.0
+    overall_risk = "Low"
     
     # Main content
     col1, col2 = st.columns([2, 1])
@@ -87,7 +101,13 @@ def render_earthquake_page():
                 seismic_df = pd.DataFrame(seismic_events)
                 seismic_df = seismic_df[seismic_df['magnitude'] >= magnitude_threshold]
             else:
-                seismic_df = pd.DataFrame(columns=['date', 'latitude', 'longitude', 'magnitude', 'depth'])
+                seismic_df = pd.DataFrame({
+                    'date': pd.Series([], dtype='datetime64[ns]'),
+                    'latitude': pd.Series([], dtype='float64'),
+                    'longitude': pd.Series([], dtype='float64'),
+                    'magnitude': pd.Series([], dtype='float64'),
+                    'depth': pd.Series([], dtype='float64')
+                })
         
         if not seismic_df.empty:
             # Magnitude distribution over time
@@ -106,10 +126,13 @@ def render_earthquake_page():
             fig_magnitude.add_hline(y=6.0, line_dash="dash", line_color="red", 
                                    annotation_text="Strong Earthquake Threshold")
             fig_magnitude.update_layout(height=400)
-            st.plotly_chart(fig_magnitude, use_container_width=True)
+            st.plotly_chart(fig_magnitude, width='stretch')
             
             # Daily seismic activity
-            seismic_df['date_only'] = seismic_df['date'].dt.date
+            if len(seismic_df) > 0:
+                seismic_df['date_only'] = seismic_df['date'].dt.date
+            else:
+                seismic_df['date_only'] = pd.Series([], dtype='object')
             daily_activity = seismic_df.groupby('date_only').agg({
                 'magnitude': ['count', 'max', 'mean'],
                 'depth': 'mean'
@@ -130,7 +153,7 @@ def render_earthquake_page():
                 labels={'event_count': 'Number of Earthquakes', 'date': 'Date'}
             )
             fig_daily.update_layout(height=400)
-            st.plotly_chart(fig_daily, use_container_width=True)
+            st.plotly_chart(fig_daily, width='stretch')
             
             # Depth vs magnitude analysis
             st.subheader("🔍 Magnitude-Depth Analysis")
@@ -144,7 +167,7 @@ def render_earthquake_page():
                 labels={'depth': 'Depth (km)', 'magnitude': 'Magnitude'},
                 color_continuous_scale='Reds'
             )
-            st.plotly_chart(fig_depth, use_container_width=True)
+            st.plotly_chart(fig_depth, width='stretch')
         else:
             st.info("No seismic events above the selected magnitude threshold in the analysis period.")
             # Create empty plots for consistency
@@ -152,40 +175,59 @@ def render_earthquake_page():
             fig_empty.add_annotation(text="No data available for the selected parameters", 
                                    xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
             fig_empty.update_layout(height=400, title="Earthquake Magnitude Over Time")
-            st.plotly_chart(fig_empty, use_container_width=True)
+            st.plotly_chart(fig_empty, width='stretch')
     
     with col2:
         st.subheader("🎯 Current Seismic Assessment")
         
         # Generate earthquake prediction
         if not seismic_df.empty:
-            latest_data = {
-                'seismic_activity': seismic_df['magnitude'].tail(10).values if len(seismic_df) > 0 else np.array([0]),
-                'depth': seismic_df['depth'].tail(10).values if len(seismic_df) > 0 else np.array([10])
-            }
+            # Ensure we have enough data for feature extraction (e.g., last 10 events)
+            num_events_for_prediction = min(10, len(seismic_df))
+            if num_events_for_prediction > 0:
+                latest_data = {
+                    'seismic_activity': seismic_df['magnitude'].tail(num_events_for_prediction).values.tolist(),
+                    'depth': seismic_df['depth'].tail(num_events_for_prediction).values.tolist()
+                }
+            else:
+                latest_data = {
+                    'seismic_activity': [],
+                    'depth': []
+                }
         else:
             latest_data = {
-                'seismic_activity': np.array([0]),
-                'depth': np.array([10])
+                'seismic_activity': [],
+                'depth': []
             }
         
         earthquake_prediction = st.session_state.predictor.predict_earthquake_risk(latest_data)
         
-        # Display current risk
-        magnitude_prediction = earthquake_prediction['magnitude_prediction']
-        risk_probability = earthquake_prediction['probability']
-        confidence = earthquake_prediction['confidence']
-        
-        # Risk level based on predicted magnitude
-        if magnitude_prediction >= 6.0:
-            risk_level = "High"
-            risk_color = "red"
-        elif magnitude_prediction >= 4.0:
-            risk_level = "Medium"
-            risk_color = "orange"
+        if "error" in earthquake_prediction:
+            st.error(f"Prediction Error: {earthquake_prediction['error']}")
+            # Re-initialize variables to default values if there's an error
+            magnitude_prediction = 0.0
+            risk_probability = 0.0
+            confidence = 0.0
+            risk_level = "Unknown"
+            risk_color = "gray"
+            factors = {}
         else:
-            risk_level = "Low"
-            risk_color = "green"
+            # Display current risk
+            magnitude_prediction = earthquake_prediction['magnitude_prediction']
+            risk_probability = earthquake_prediction['probability']
+            confidence = earthquake_prediction['confidence']
+            factors = earthquake_prediction['factors']
+
+            # Risk level based on predicted magnitude
+            if magnitude_prediction >= 6.0:
+                risk_level = "High"
+                risk_color = "red"
+            elif magnitude_prediction >= 4.0:
+                risk_level = "Medium"
+                risk_color = "orange"
+            else:
+                risk_level = "Low"
+                risk_color = "green"
         
         st.markdown(f"**Current Risk Level:** <span style='color: {risk_color}'>{risk_level}</span>", 
                    unsafe_allow_html=True)
@@ -194,17 +236,20 @@ def render_earthquake_page():
         st.metric("Risk Probability", f"{risk_probability:.1%}")
         st.metric("Model Confidence", f"{confidence:.1%}")
         
-        # Risk factors
-        st.subheader("📈 Key Risk Factors")
-        factors = earthquake_prediction['factors']
-        
-        factor_df = pd.DataFrame([
-            {'Factor': 'Seismic Activity Level', 'Value': f"{factors['seismic_activity']:.2f}", 'Impact': 'High' if factors['seismic_activity'] > 0.6 else 'Normal'},
-            {'Factor': 'Tectonic Stress', 'Value': f"{factors['tectonic_stress']:.2f}", 'Impact': 'High' if factors['tectonic_stress'] > 0.7 else 'Normal'},
-            {'Factor': 'Historical Frequency', 'Value': f"{factors['historical_frequency']:.2f}", 'Impact': 'High' if factors['historical_frequency'] > 0.5 else 'Normal'}
-        ])
-        
-        st.dataframe(factor_df, use_container_width=True)
+        # Risk factors (only display if factors are available and not empty)
+        if factors and any(factors.values()):
+            st.subheader("📈 Key Risk Factors")
+            factor_df = pd.DataFrame([
+                {'Factor': 'Seismic Activity Mean', 'Value': f"{factors.get('seismic_mean', 0.0):.2f}", 'Impact': 'High' if factors.get('seismic_mean', 0.0) > 0.6 else 'Normal'},
+                {'Factor': 'b-value', 'Value': f"{factors.get('b_value', 1.0):.2f}", 'Impact': 'Decreasing' if factors.get('b_value', 1.0) < 0.8 else 'Normal'},
+                {'Factor': 'Recent Events', 'Value': f"{factors.get('seismic_count', 0)}", 'Impact': 'High' if factors.get('seismic_count', 0) > 10 else 'Normal'},
+                {'Factor': 'Shallow Events', 'Value': f"{factors.get('shallow_events', 0)}", 'Impact': 'High' if factors.get('shallow_events', 0) > 2 else 'Normal'},
+                {'Factor': 'Energy Release', 'Value': f"{factors.get('seismic_energy', 0.0):.2f}", 'Impact': 'High' if factors.get('seismic_energy', 0.0) > 10 else 'Normal'}
+            ])
+            
+            st.dataframe(factor_df, width='stretch')
+        else:
+            st.info("No risk factors to display (prediction might be unavailable or failed).")
         
         # Historical comparison
         st.subheader("📊 Historical Context")
@@ -217,7 +262,10 @@ def render_earthquake_page():
             mean_magnitude = seismic_df['magnitude'].mean()
             
             # Calculate b-value (Gutenberg-Richter relationship)
-            magnitudes = seismic_df['magnitude'].values
+            if len(seismic_df) > 0:
+                magnitudes = seismic_df['magnitude'].values
+            else:
+                magnitudes = np.array([])
             mag_bins = np.arange(magnitude_threshold, max_magnitude + 0.5, 0.5)
             hist, _ = np.histogram(magnitudes, bins=mag_bins)
             
@@ -234,8 +282,8 @@ def render_earthquake_page():
         else:
             recent_activity = 0
             total_events = 0
-            max_magnitude = 0
-            mean_magnitude = 0
+            max_magnitude = 0.0
+            mean_magnitude = 0.0
             b_value = 1.0
         
         st.metric("Recent Activity (7 days)", f"{recent_activity} events")
@@ -267,7 +315,7 @@ def render_earthquake_page():
             if len(first_half) > 0 and len(second_half) > 0:
                 rate_change = (len(second_half) - len(first_half)) / len(first_half) * 100
             else:
-                rate_change = 0
+                rate_change = 0.0
             
             indicators_df = pd.DataFrame([
                 {'Indicator': 'Recent Activity (7 days)', 'Value': f"{recent_events_7d} events", 'Status': 'High' if recent_events_7d > 10 else 'Normal'},
@@ -285,7 +333,7 @@ def render_earthquake_page():
                 {'Indicator': 'Activity Rate Change', 'Value': '0%', 'Status': 'No Data'}
             ])
         
-        st.dataframe(indicators_df, use_container_width=True)
+        st.dataframe(indicators_df, width='stretch')
     
     with col2:
         st.subheader("🔮 Forecast & Probability")
@@ -319,7 +367,7 @@ def render_earthquake_page():
             {'Magnitude Range': 'M ≥ 6.0', 'Probability': f"{prob_6:.1%}", 'Risk Level': 'Critical' if prob_6 > 0.05 else 'High' if prob_6 > 0.02 else 'Low'}
         ])
         
-        st.dataframe(prob_df, use_container_width=True)
+        st.dataframe(prob_df, width='stretch')
         
         # Probability visualization
         fig_prob = px.bar(
@@ -330,7 +378,7 @@ def render_earthquake_page():
             labels={'y': 'Probability', 'x': 'Magnitude Range'}
         )
         fig_prob.update_layout(height=300)
-        st.plotly_chart(fig_prob, use_container_width=True)
+        st.plotly_chart(fig_prob, width='stretch')
         
         # Overall risk assessment
         if prob_6 > 0.05:
@@ -357,15 +405,16 @@ def render_earthquake_page():
     historical_events = []
     if not seismic_df.empty:
         # Add recent significant earthquakes to map
-        significant_events = seismic_df[seismic_df['magnitude'] >= 4.0].tail(5)
-        for _, event in significant_events.iterrows():
-            historical_events.append({
-                'lat': event['latitude'],
-                'lon': event['longitude'],
-                'type': 'earthquake',
-                'date': event['date'].strftime('%Y-%m-%d'),
-                'magnitude': f"M{event['magnitude']:.1f}"
-            })
+        if len(seismic_df) > 0:
+            significant_events = seismic_df[seismic_df['magnitude'] >= 4.0].tail(5)
+            for _, event in significant_events.iterrows():
+                historical_events.append({
+                    'lat': float(event['latitude']),
+                    'lon': float(event['longitude']),
+                    'type': 'earthquake',
+                    'date': event['date'].strftime('%Y-%m-%d'),
+                    'magnitude': f"M{event['magnitude']:.1f}"
+                })
     
     region_data = {
         'monitoring_stations': [
@@ -388,7 +437,8 @@ def render_earthquake_page():
         zoom_start=8
     )
     
-    st.components.v1.html(region_map._repr_html_(), height=400)
+    import streamlit.components.v1 as components
+    components.html(region_map._repr_html_(), height=400)
     
     # Action recommendations
     st.markdown("---")

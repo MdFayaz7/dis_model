@@ -17,9 +17,17 @@ def create_hazard_map(hazard_data: List[Dict], center_lat: float = 20.0,
         tiles='OpenStreetMap'
     )
     
-    # Add additional tile layers
-    folium.TileLayer('Stamen Terrain').add_to(m)
-    folium.TileLayer('Stamen Toner').add_to(m)
+    # Add additional tile layers with proper attribution
+    folium.TileLayer(
+        tiles='https://stamen-tiles-{s}.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png',
+        attr='Map tiles by Stamen Design, CC BY 3.0 — Map data © OpenStreetMap contributors',
+        name='Stamen Terrain'
+    ).add_to(m)
+    folium.TileLayer(
+        tiles='https://stamen-tiles-{s}.a.ssl.fastly.net/toner/{z}/{x}/{y}.png',
+        attr='Map tiles by Stamen Design, CC BY 3.0 — Map data © OpenStreetMap contributors',
+        name='Stamen Toner'
+    ).add_to(m)
     
     # Color schemes for different hazard types
     hazard_colors = {
@@ -88,7 +96,8 @@ def create_hazard_map(hazard_data: List[Dict], center_lat: float = 20.0,
     
     # Add a legend
     legend_html = create_legend_html()
-    m.get_root().html.add_child(folium.Element(legend_html))
+    legend_element = folium.Element(legend_html)
+    m.get_root().html.add_child(legend_element)
     
     return m
 
@@ -295,24 +304,24 @@ def add_satellite_overlay(map_obj: folium.Map, satellite_data: Dict) -> folium.M
     # This would integrate with actual satellite imagery services
     # For demonstration, we'll add a mock overlay
     
-    # Add NDVI overlay (mock)
+    # Add NDVI overlay (mock) - using alternative approach since raster_layers might not be available
     if 'ndvi_bounds' in satellite_data:
         bounds = satellite_data['ndvi_bounds']
-        folium.raster_layers.ImageOverlay(
-            image='https://via.placeholder.com/256x256/00FF00/FFFFFF?text=NDVI',
-            bounds=bounds,
-            opacity=0.6,
-            name='NDVI Overlay'
+        # Alternative: Add as a marker layer instead of image overlay
+        folium.Marker(
+            location=[(bounds[0][0] + bounds[1][0])/2, (bounds[0][1] + bounds[1][1])/2],
+            popup='NDVI Data Available',
+            icon=folium.Icon(color='green', icon='leaf')
         ).add_to(map_obj)
     
     # Add soil moisture overlay (mock)
     if 'moisture_bounds' in satellite_data:
         bounds = satellite_data['moisture_bounds']
-        folium.raster_layers.ImageOverlay(
-            image='https://via.placeholder.com/256x256/0000FF/FFFFFF?text=Moisture',
-            bounds=bounds,
-            opacity=0.6,
-            name='Soil Moisture Overlay'
+        # Alternative: Add as a marker layer instead of image overlay
+        folium.Marker(
+            location=[(bounds[0][0] + bounds[1][0])/2, (bounds[0][1] + bounds[1][1])/2],
+            popup='Soil Moisture Data Available',
+            icon=folium.Icon(color='blue', icon='tint')
         ).add_to(map_obj)
     
     return map_obj

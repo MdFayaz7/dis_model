@@ -47,7 +47,7 @@ def render_data_overview():
             return 'color: red'
     
     styled_df = sources_df.style.applymap(color_status, subset=['Status'])
-    st.dataframe(styled_df, use_container_width=True)
+    st.dataframe(styled_df, width='stretch')
     
     # Data processing metrics
     st.markdown("---")
@@ -95,7 +95,7 @@ def render_data_overview():
             color='Source',
             title='Daily Data Volume by Source (Last 30 Days)'
         )
-        st.plotly_chart(fig_volume, use_container_width=True)
+        st.plotly_chart(fig_volume, width='stretch')
     
     with col2:
         # Processing time statistics
@@ -119,7 +119,7 @@ def render_data_overview():
         )
         fig_processing.update_traces(texttemplate='%{text}%', textposition='outside')
         fig_processing.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_processing, use_container_width=True)
+        st.plotly_chart(fig_processing, width='stretch')
     
     # Data quality assessment
     st.markdown("---")
@@ -148,7 +148,7 @@ def render_data_overview():
             title='Data Quality vs Coverage by Region',
             size_max=20
         )
-        st.plotly_chart(fig_quality, use_container_width=True)
+        st.plotly_chart(fig_quality, width='stretch')
     
     with col2:
         # Data freshness
@@ -169,7 +169,7 @@ def render_data_overview():
             color_continuous_scale='RdYlGn_r'
         )
         fig_freshness.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_freshness, use_container_width=True)
+        st.plotly_chart(fig_freshness, width='stretch')
     
     # Geographic coverage
     st.markdown("---")
@@ -191,7 +191,7 @@ def render_data_overview():
         values='confidence',
         title='Data Coverage by Region Type and Hazard'
     )
-    st.plotly_chart(fig_coverage, use_container_width=True)
+    st.plotly_chart(fig_coverage, width='stretch')
     
     # Real-time processing status
     st.markdown("---")
@@ -208,7 +208,7 @@ def render_data_overview():
             'Progress': ['75%', '0%', '45%', '0%']
         }
         queue_df = pd.DataFrame(queue_data)
-        st.dataframe(queue_df, use_container_width=True)
+        st.dataframe(queue_df, width='stretch')
     
     with col2:
         st.markdown("**System Performance**")
@@ -218,7 +218,7 @@ def render_data_overview():
             'Threshold': ['85%', '80%', '90%', '75%']
         }
         perf_df = pd.DataFrame(perf_data)
-        st.dataframe(perf_df, use_container_width=True)
+        st.dataframe(perf_df, width='stretch')
     
     with col3:
         st.markdown("**Error Log Summary**")
@@ -228,7 +228,7 @@ def render_data_overview():
             'Last Occurrence': ['2h ago', '8h ago', '4h ago', 'Never']
         }
         error_df = pd.DataFrame(error_data)
-        st.dataframe(error_df, use_container_width=True)
+        st.dataframe(error_df, width='stretch')
     
     # Data processing pipeline visualization
     st.markdown("---")
@@ -285,7 +285,7 @@ def render_data_overview():
         plot_bgcolor='white'
     )
     
-    st.plotly_chart(fig_pipeline, use_container_width=True)
+    st.plotly_chart(fig_pipeline, width='stretch')
     
     # Data export and API status
     st.markdown("---")
@@ -308,7 +308,7 @@ def render_data_overview():
             y='Downloads',
             title='Data Exports by Format'
         )
-        st.plotly_chart(fig_export, use_container_width=True)
+        st.plotly_chart(fig_export, width='stretch')
     
     with col2:
         st.markdown("**API Endpoints Status**")
@@ -330,14 +330,14 @@ def render_data_overview():
                 return 'color: red'
         
         styled_api_df = api_df.style.applymap(color_api_status, subset=['Status'])
-        st.dataframe(styled_api_df, use_container_width=True)
+        st.dataframe(styled_api_df, width='stretch')
     
     # Refresh data button
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 1, 1])
     
     with col2:
-        if st.button("🔄 Refresh Data Sources", type="primary", use_container_width=True):
+        if st.button("🔄 Refresh Data Sources", type="primary", width='stretch'):
             with st.spinner("Refreshing data sources..."):
                 # Simulate refresh process
                 import time
